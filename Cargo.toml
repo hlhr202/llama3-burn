@@ -10,6 +10,8 @@ burn = { version = "0.15.0", git = "https://github.com/tracel-ai/burn.git", bran
     "wgpu",
     "ndarray",
     "candle",
-    "candle-cuda",
+    "metal"
 ] }
+num-traits = "0.2.19"
 safetensors = "0.4.3"
+tokenizers = { version = "0.19.1", features = ["hf-hub", "http"] }

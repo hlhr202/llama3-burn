@@ -1,73 +1,7 @@
 use burn::tensor::{backend::Backend, bf16, f16, Bool, Data, Device, Float, Int, Shape, Tensor};
 use safetensors::{Dtype, SafeTensors};
 
-#[test]
-fn test_read_tinyllama2() {
-    use burn::backend::{
-        candle::{Candle, CandleDevice},
-        wgpu::{Wgpu, WgpuDevice},
-    };
-    use std::io::Read;
-
-    let file = std::fs::File::open("model.safetensors").unwrap();
-    let bytes = file.bytes().collect::<Result<Vec<u8>, _>>().unwrap();
-    let tensors = SafeTensors::deserialize(&bytes).unwrap();
-
-    tensors.tensors().into_iter().for_each(|(name, view)| {
-        let shape = view.shape();
-        println!("{}: {:?}, {:?}", name, shape.to_vec(), view.dtype());
-    });
-
-    println!();
-
-    #[cfg(not(target_os = "macos"))]
-    let device = CandleDevice::Cpu;
-
-    #[cfg(target_os = "macos")]
-    let device = CandleDevice::Metal(0);
-
-    let up_proj_bf16 = tensors
-        .read_burn_tensor_bf16::<Candle<bf16>, 2>("model.layers.0.mlp.up_proj.weight", &device);
-    println!("{}", up_proj_bf16);
-
-    let device = WgpuDevice::DiscreteGpu(0);
-    // wgpu is not supporting bf16
-    let up_proj_f32 = tensors
-        .read_burn_tensor_bf16_as_f32::<Wgpu, 2>("model.layers.0.mlp.up_proj.weight", &device);
-    println!("{}", up_proj_f32);
-}
-
-#[test]
-fn test_serialize() {
-    use burn::backend::wgpu::{Wgpu, WgpuDevice};
-    use safetensors::{serialize, tensor::TensorView, Dtype, SafeTensors};
-    use std::collections::HashMap;
-
-    let raw = vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let data: Vec<u8> = raw
-        .clone()
-        .into_iter()
-        .flat_map(|f| f.to_le_bytes())
-        .collect();
-    let shape = vec![1, 1, 2, 3];
-    let attn_0 = TensorView::new(Dtype::F32, shape.clone(), &data).unwrap();
-    let metadata: HashMap<String, TensorView> =
-            // Smaller string to force misalignment compared to previous test.
-            [("attn0".to_string(), attn_0)].into_iter().collect();
-    let binary = serialize(&metadata, &None).unwrap();
-
-    // ====================
-    let parsed = SafeTensors::deserialize(&binary).unwrap();
-    let device = WgpuDevice::DiscreteGpu(0);
-    let tensor = parsed.read_burn_tensor_f32::<Wgpu, 4>("attn0", &device);
-
-    let result = tensor.to_data().value;
-
-    assert_eq!(result, raw);
-    assert_eq!(shape, tensor.shape().dims);
-}
-
-trait ReadBurnTensor {
+pub trait SafeTensorsReader {
     fn read_burn_tensor_bool<B: Backend, const D: usize>(
         &self,
         name: &str,
@@ -117,7 +51,7 @@ trait ReadBurnTensor {
         Data<B::IntElem, D>: From<Data<i32, D>>;
 }
 
-impl ReadBurnTensor for SafeTensors<'_> {
+impl SafeTensorsReader for SafeTensors<'_> {
     fn read_burn_tensor_bool<B: Backend, const D: usize>(
         &self,
         name: &str,
@@ -250,4 +184,34 @@ impl ReadBurnTensor for SafeTensors<'_> {
         let data: Data<i32, D> = Data::new(data.to_vec(), Shape::from(shape.to_vec()));
         Tensor::<B, D, Int>::from_data(data, device)
     }
+}
+
+#[test]
+fn test_serialize() {
+    use burn::backend::wgpu::{Wgpu, WgpuDevice};
+    use safetensors::{serialize, tensor::TensorView, Dtype, SafeTensors};
+    use std::collections::HashMap;
+
+    let raw = vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0];
+    let data: Vec<u8> = raw
+        .clone()
+        .into_iter()
+        .flat_map(|f| f.to_le_bytes())
+        .collect();
+    let shape = vec![1, 1, 2, 3];
+    let attn_0 = TensorView::new(Dtype::F32, shape.clone(), &data).unwrap();
+    let metadata: HashMap<String, TensorView> =
+            // Smaller string to force misalignment compared to previous test.
+            [("attn0".to_string(), attn_0)].into_iter().collect();
+    let binary = serialize(&metadata, &None).unwrap();
+
+    // ====================
+    let parsed = SafeTensors::deserialize(&binary).unwrap();
+    let device = WgpuDevice::default();
+    let tensor = parsed.read_burn_tensor_f32::<Wgpu, 4>("attn0", &device);
+
+    let result = tensor.to_data().value;
+
+    assert_eq!(result, raw);
+    assert_eq!(shape, tensor.shape().dims);
 }

@@ -18,9 +18,9 @@ where
 
 #[test]
 fn test_rsqrt() {
-    use burn::backend::{wgpu::WgpuDevice, Wgpu};
-    let device = WgpuDevice::DiscreteGpu(0);
-    let a = Tensor::<Wgpu, 1>::from_data([1., 2., 3., 4.], &device);
+    use burn::backend::ndarray::{NdArray, NdArrayDevice};
+    let device = NdArrayDevice::Cpu;
+    let a = Tensor::<NdArray, 1>::from_data([1., 2., 3., 4.], &device);
     let result = a.rsqrt();
     let expected = Tensor::ones([4], &device) / a.sqrt();
 
