@@ -3,48 +3,57 @@ mod loader;
 mod model;
 mod operators;
 
-use std::io::Read;
-
+use crate::model::{attn_decoder_mask, Llama, RotaryEncodingConfig};
 use burn::{
     backend::wgpu::{Wgpu, WgpuDevice},
     module::Param,
     nn::{self, Embedding},
-    tensor::{backend::Backend, Data, Int, Shape, Tensor},
+    tensor::{backend::Backend, Data, Tensor},
 };
 use config::Config;
 use loader::SafeTensorsReader;
 use model::{Mlp, MultiHeadSelfAttention, ResidualDecoderAttentionBlock, RmsNorm};
 use num_traits::ToPrimitive;
 use safetensors::SafeTensors;
+use std::io::{Read, Write};
 use tokenizers::Tokenizer;
 
-use crate::model::{attn_decoder_mask, Llama, RotaryEncodingConfig};
+type MyBackend = Wgpu;
 
-fn load_mlp<B: Backend>(safetensors: &SafeTensors, path: &str, device: &B::Device) -> Mlp<B>
+fn load_mlp<B: Backend>(
+    safetensors: &SafeTensors,
+    _config: &Config,
+    path: &str,
+    device: &B::Device,
+) -> Mlp<B>
 where
     Data<B::FloatElem, 2>: From<Data<f32, 2>>,
 {
-    let proj = safetensors.tensor(&format!("{}.gate_proj.weight", path)).unwrap();
-    println!("{:?}", proj.shape());
-    let gate_proj = safetensors
-        .read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.gate_proj.weight", path), device);
-    let up_proj = safetensors
-        .read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.up_proj.weight", path), device);
-    let down_proj = safetensors
-        .read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.down_proj.weight", path), device);
+    let gate_proj =
+        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.gate_proj.weight", path), device);
+    let gate_proj = nn::Linear {
+        weight: Param::from_tensor(gate_proj.transpose()),
+        bias: None,
+    };
+
+    let up_proj =
+        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.up_proj.weight", path), device);
+    let up_proj = nn::Linear {
+        weight: Param::from_tensor(up_proj.transpose()),
+        bias: None,
+    };
+
+    let down_proj =
+        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.down_proj.weight", path), device);
+    let down_proj = nn::Linear {
+        weight: Param::from_tensor(down_proj.transpose()),
+        bias: None,
+    };
+
     Mlp {
-        gate_proj: nn::Linear {
-            weight: Param::from_tensor(gate_proj),
-            bias: None,
-        },
-        up_proj: nn::Linear {
-            weight: Param::from_tensor(up_proj),
-            bias: None,
-        },
-        down_proj: nn::Linear {
-            weight: Param::from_tensor(down_proj),
-            bias: None,
-        },
+        gate_proj,
+        up_proj,
+        down_proj,
     }
 }
 
@@ -57,8 +66,7 @@ fn load_rmsnorm<B: Backend>(
 where
     Data<B::FloatElem, 1>: From<Data<f32, 1>>,
 {
-    let weight =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 1>(&format!("{}.weight", path), device);
+    let weight = safetensors.read_burn_tensor_bf16_as_f32::<B, 1>(&format!("{}.weight", path), device);
     let eps = config.rms_norm_eps;
     RmsNorm {
         weight: Param::from_tensor(weight),
@@ -75,14 +83,14 @@ fn load_attention<B: Backend>(
 where
     Data<B::FloatElem, 2>: From<Data<f32, 2>>,
 {
-    let k_proj = safetensors
-        .read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.k_proj.weight", path), device);
-    let q_proj = safetensors
-        .read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.q_proj.weight", path), device);
-    let v_proj = safetensors
-        .read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.v_proj.weight", path), device);
-    let o_proj = safetensors
-        .read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.o_proj.weight", path), device);
+    let k_proj =
+        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.k_proj.weight", path), device);
+    let q_proj =
+        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.q_proj.weight", path), device);
+    let v_proj =
+        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.v_proj.weight", path), device);
+    let o_proj =
+        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.o_proj.weight", path), device);
 
     let n_heads = config.n_heads;
     let n_kv_heads = config.n_kv_heads;
@@ -90,19 +98,19 @@ where
         n_heads,
         n_kv_heads,
         query: nn::Linear {
-            weight: Param::from_tensor(q_proj),
+            weight: Param::from_tensor(q_proj.transpose()),
             bias: None,
         },
         key: nn::Linear {
-            weight: Param::from_tensor(k_proj),
+            weight: Param::from_tensor(k_proj.transpose()),
             bias: None,
         },
         value: nn::Linear {
-            weight: Param::from_tensor(v_proj),
+            weight: Param::from_tensor(v_proj.transpose()),
             bias: None,
         },
         out: nn::Linear {
-            weight: Param::from_tensor(o_proj),
+            weight: Param::from_tensor(o_proj.transpose()),
             bias: None,
         },
     }
@@ -126,7 +134,7 @@ where
         &format!("{}.input_layernorm", path),
         device,
     );
-    let mlp = load_mlp::<B>(safetensors, &format!("{}.mlp", path), device);
+    let mlp = load_mlp::<B>(safetensors, config, &format!("{}.mlp", path), device);
     let post_attn_layernorm = load_rmsnorm::<B>(
         safetensors,
         config,
@@ -178,7 +186,7 @@ where
     // sometimes lm_head is also called "output"
     let lm_head = safetensors.read_burn_tensor_bf16_as_f32::<B, 2>("lm_head.weight", device);
     let lm_head = nn::Linear {
-        weight: Param::from_tensor(lm_head),
+        weight: Param::from_tensor(lm_head.transpose()),
         bias: None,
     };
     let mask = attn_decoder_mask::<B>(config.max_seq_len, device);
@@ -202,14 +210,18 @@ fn main() {
     let file = std::fs::File::open(path).unwrap();
     let bytes = file.bytes().collect::<Result<Vec<u8>, _>>().unwrap();
     let tensors = SafeTensors::deserialize(&bytes).unwrap();
+
+    tensors.tensors().iter().for_each(|(name, tensor)| {
+        println!("{}, {:?}, {:?}", name, tensor.dtype(), tensor.shape());
+    });
+
     let config = Config::config_tiny();
 
-    let llama = load_llama::<Wgpu>(&tensors, &config, &device);
+    let llama = load_llama::<MyBackend>(&tensors, &config, &device);
 
-    println!("{:#?}", llama);
     let tokenizer = Tokenizer::from_pretrained("stas/tiny-random-llama-2", None).unwrap();
     let prompt = "Hello, ".to_string();
-    let tokens = tokenizer.encode(prompt, false).unwrap();
+    let tokens = tokenizer.encode(prompt.clone(), false).unwrap();
     let mut tokens = tokens
         .get_ids()
         .iter()
@@ -218,20 +230,32 @@ fn main() {
 
     let mut text = String::new();
 
-    for _i in 0..256 {
-        let input = Data::new(tokens.clone(), Shape::new([tokens.len()]));
-        let input = Tensor::<Wgpu, 1, Int>::from_data(input, &device).unsqueeze();
+    println!("\n\n\n");
+    print!("{}", prompt);
 
-        let out = llama.forward(input);
+    for _i in 0..256 {
+        let token_tensor = Tensor::from_ints(
+            Data::from_usize(Data::new(
+                tokens.iter().map(|&t| t as usize).collect(),
+                [tokens.len()].into(),
+            )),
+            &device,
+        )
+        .unsqueeze::<2>();
+
+        let out = llama.forward(token_tensor);
         let [_n_batch, n_token, _n_dict] = out.dims();
-        let last_row: Tensor<Wgpu, 1> = out.slice([0..1, (n_token - 1)..n_token]).flatten(0, 2);
+        let last_row: Tensor<MyBackend, 1> =
+            out.slice([0..1, (n_token - 1)..n_token]).flatten(0, 2);
 
         let token_id = last_row.argmax(0).into_scalar().to_i32().unwrap();
         tokens.push(token_id);
 
         let token_text = tokenizer.decode(&[token_id as u32], true).unwrap();
-        println!("{token_text}");
+        print!("{token_text} ");
+        std::io::stdout().flush().unwrap();
 
         text += &token_text;
     }
+    println!();
 }

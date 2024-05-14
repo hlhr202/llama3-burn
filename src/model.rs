@@ -110,15 +110,16 @@ impl<B: Backend> RmsNorm<B> {
 
 #[derive(Module, Debug)]
 pub struct Mlp<B: Backend> {
+    // w1
     pub gate_proj: nn::Linear<B>,
+    // w3
     pub up_proj: nn::Linear<B>,
+    // w2
     pub down_proj: nn::Linear<B>,
 }
 
 impl<B: Backend> Mlp<B> {
     fn forward(&self, xs: Tensor<B, 3>) -> Tensor<B, 3> {
-        println!("xs: {:?}", xs.shape());
-        println!("gate_proj: {:?}", self.gate_proj.weight.shape());
         let xs = silu(self.gate_proj.forward(xs.clone())) * self.up_proj.forward(xs.clone());
         self.down_proj.forward(xs)
     }
@@ -228,24 +229,17 @@ impl<B: Backend> ResidualDecoderAttentionBlock<B> {
         rotary_encoder: &RotaryEncoding<B>,
         mask: Tensor<B, 2>,
     ) -> Tensor<B, 3> {
-        // let residual = hidden_states.clone();
-        // let hidden_states = self.input_layernorm.forward(hidden_states);
-        // let hidden_states = self
-        //     .self_attn
-        //     .forward(hidden_states, rotary_encoder, Some(mask));
-        // let hidden_states = residual + hidden_states;
+        let residual = hidden_states.clone();
+        let hidden_states = self.input_layernorm.forward(hidden_states);
+        let hidden_states = self
+            .self_attn
+            .forward(hidden_states, rotary_encoder, Some(mask));
+        let hidden_states = residual + hidden_states;
 
-        // let residual = hidden_states.clone();
-        // let hidden_states = self.post_attn_layernorm.forward(hidden_states);
-        // let hidden_states = self.mlp.forward(hidden_states);
-        // residual + hidden_states
-        let x = hidden_states.clone()
-            + self.self_attn.forward(
-                self.input_layernorm.forward(hidden_states),
-                rotary_encoder,
-                Some(mask),
-            );
-        x.clone() + self.mlp.forward(self.post_attn_layernorm.forward(x))
+        let residual = hidden_states.clone();
+        let hidden_states = self.post_attn_layernorm.forward(hidden_states);
+        let hidden_states = self.mlp.forward(hidden_states);
+        residual + hidden_states
     }
 }
 
