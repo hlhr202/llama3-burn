@@ -1,7 +1,7 @@
 import torch
 import transformers
 from transformers import AutoTokenizer
-model = "stas/tiny-random-llama-2"
+model = "HuggingFaceM4/tiny-random-Llama3ForCausalLM"
 
 tokenizer = AutoTokenizer.from_pretrained(model)
 
@@ -18,7 +18,7 @@ sequences = pipeline(
     top_k=1,
     num_return_sequences=1,
     eos_token_id=tokenizer.eos_token_id,
-    max_length=20,
+    max_length=256,
 )
 
 print("\n\n\n")

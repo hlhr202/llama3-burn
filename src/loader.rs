@@ -18,6 +18,7 @@ pub trait SafeTensorsReader {
     where
         Data<B::FloatElem, D>: From<Data<f32, D>>;
 
+    #[cfg(not(feature = "wgpu"))]
     fn read_burn_tensor_f16<B: Backend, const D: usize>(
         &self,
         name: &str,
@@ -26,6 +27,16 @@ pub trait SafeTensorsReader {
     where
         Data<B::FloatElem, D>: From<Data<f16, D>>;
 
+    #[cfg(feature = "wgpu")]
+    fn read_burn_tensor_f16<B: Backend, const D: usize>(
+        &self,
+        name: &str,
+        device: &Device<B>,
+    ) -> Tensor<B, D, Float>
+    where
+        Data<B::FloatElem, D>: From<Data<f32, D>>;
+
+    #[cfg(not(feature = "wgpu"))]
     fn read_burn_tensor_bf16<B: Backend, const D: usize>(
         &self,
         name: &str,
@@ -34,7 +45,8 @@ pub trait SafeTensorsReader {
     where
         Data<B::FloatElem, D>: From<Data<bf16, D>>;
 
-    fn read_burn_tensor_bf16_as_f32<B: Backend, const D: usize>(
+    #[cfg(feature = "wgpu")]
+    fn read_burn_tensor_bf16<B: Backend, const D: usize>(
         &self,
         name: &str,
         device: &Device<B>,
@@ -92,6 +104,7 @@ impl SafeTensorsReader for SafeTensors<'_> {
         Tensor::<B, D, Float>::from_data(data, device)
     }
 
+    #[cfg(not(feature = "wgpu"))]
     fn read_burn_tensor_f16<B: Backend, const D: usize>(
         &self,
         name: &str,
@@ -117,6 +130,7 @@ impl SafeTensorsReader for SafeTensors<'_> {
         Tensor::<B, D, Float>::from_data(data, device)
     }
 
+    #[cfg(not(feature = "wgpu"))]
     fn read_burn_tensor_bf16<B: Backend, const D: usize>(
         &self,
         name: &str,
@@ -141,7 +155,34 @@ impl SafeTensorsReader for SafeTensors<'_> {
         Tensor::<B, D, Float>::from_data(data, device)
     }
 
-    fn read_burn_tensor_bf16_as_f32<B: Backend, const D: usize>(
+    #[cfg(feature = "wgpu")]
+    fn read_burn_tensor_f16<B: Backend, const D: usize>(
+        &self,
+        name: &str,
+        device: &Device<B>,
+    ) -> Tensor<B, D, Float>
+    where
+        Data<B::FloatElem, D>: From<Data<f32, D>>,
+    {
+        let safe_tensors = self.tensor(name).unwrap();
+        let dtype = safe_tensors.dtype();
+        assert_eq!(dtype, Dtype::F16);
+        let shape = safe_tensors.shape();
+        let count = shape.iter().product::<usize>();
+
+        let data: &[u16] =
+            unsafe { std::slice::from_raw_parts(safe_tensors.data().as_ptr() as *const _, count) };
+        let data: Vec<f32> = data
+            .iter()
+            .map(|&x| f16::from_bits(x).to_f32())
+            .collect::<Vec<f32>>();
+        let data: Data<f32, D> = Data::new(data, Shape::from(shape.to_vec()));
+        Tensor::<B, D, Float>::from_data(data, device)
+    }
+
+    /// When the `wgpu` feature is enabled, `bf16` is represented as `f32` in SafeTensors.
+    #[cfg(feature = "wgpu")]
+    fn read_burn_tensor_bf16<B: Backend, const D: usize>(
         &self,
         name: &str,
         device: &Device<B>,
@@ -186,6 +227,35 @@ impl SafeTensorsReader for SafeTensors<'_> {
     }
 }
 
+pub trait WgpuFloatTensorReader {
+    fn read_full_float<B: Backend, const D: usize>(
+        &self,
+        name: &str,
+        device: &Device<B>,
+    ) -> Tensor<B, D, Float>
+    where
+        Data<B::FloatElem, D>: From<Data<f32, D>>;
+}
+
+impl WgpuFloatTensorReader for SafeTensors<'_> {
+    fn read_full_float<B: Backend, const D: usize>(
+        &self,
+        name: &str,
+        device: &Device<B>,
+    ) -> Tensor<B, D, Float>
+    where
+        Data<B::FloatElem, D>: From<Data<f32, D>>,
+    {
+        let dtype = self.tensor(name).unwrap().dtype();
+        match dtype {
+            Dtype::F32 => self.read_burn_tensor_f32::<B, D>(name, device),
+            Dtype::F16 => self.read_burn_tensor_f16::<B, D>(name, device),
+            Dtype::BF16 => self.read_burn_tensor_bf16::<B, D>(name, device),
+            _ => panic!("Unsupported dtype: {:?}", dtype),
+        }
+    }
+}
+
 #[test]
 fn test_serialize() {
     use burn::backend::wgpu::{Wgpu, WgpuDevice};
@@ -208,7 +278,7 @@ fn test_serialize() {
     // ====================
     let parsed = SafeTensors::deserialize(&binary).unwrap();
     let device = WgpuDevice::default();
-    let tensor = parsed.read_burn_tensor_f32::<Wgpu, 4>("attn0", &device);
+    let tensor = parsed.read_full_float::<Wgpu, 4>("attn0", &device);
 
     let result = tensor.to_data().value;
 

@@ -11,7 +11,7 @@ use burn::{
     tensor::{backend::Backend, Data, Tensor},
 };
 use config::Config;
-use loader::SafeTensorsReader;
+use loader::WgpuFloatTensorReader;
 use model::{Mlp, MultiHeadSelfAttention, ResidualDecoderAttentionBlock, RmsNorm};
 use num_traits::ToPrimitive;
 use safetensors::SafeTensors;
@@ -30,21 +30,20 @@ where
     Data<B::FloatElem, 2>: From<Data<f32, 2>>,
 {
     let gate_proj =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.gate_proj.weight", path), device);
+        safetensors.read_full_float::<B, 2>(&format!("{}.gate_proj.weight", path), device);
     let gate_proj = nn::Linear {
         weight: Param::from_tensor(gate_proj.transpose()),
         bias: None,
     };
 
-    let up_proj =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.up_proj.weight", path), device);
+    let up_proj = safetensors.read_full_float::<B, 2>(&format!("{}.up_proj.weight", path), device);
     let up_proj = nn::Linear {
         weight: Param::from_tensor(up_proj.transpose()),
         bias: None,
     };
 
     let down_proj =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.down_proj.weight", path), device);
+        safetensors.read_full_float::<B, 2>(&format!("{}.down_proj.weight", path), device);
     let down_proj = nn::Linear {
         weight: Param::from_tensor(down_proj.transpose()),
         bias: None,
@@ -66,7 +65,7 @@ fn load_rmsnorm<B: Backend>(
 where
     Data<B::FloatElem, 1>: From<Data<f32, 1>>,
 {
-    let weight = safetensors.read_burn_tensor_bf16_as_f32::<B, 1>(&format!("{}.weight", path), device);
+    let weight = safetensors.read_full_float::<B, 1>(&format!("{}.weight", path), device);
     let eps = config.rms_norm_eps;
     RmsNorm {
         weight: Param::from_tensor(weight),
@@ -83,17 +82,13 @@ fn load_attention<B: Backend>(
 where
     Data<B::FloatElem, 2>: From<Data<f32, 2>>,
 {
-    let k_proj =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.k_proj.weight", path), device);
-    let q_proj =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.q_proj.weight", path), device);
-    let v_proj =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.v_proj.weight", path), device);
-    let o_proj =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>(&format!("{}.o_proj.weight", path), device);
+    let k_proj = safetensors.read_full_float::<B, 2>(&format!("{}.k_proj.weight", path), device);
+    let q_proj = safetensors.read_full_float::<B, 2>(&format!("{}.q_proj.weight", path), device);
+    let v_proj = safetensors.read_full_float::<B, 2>(&format!("{}.v_proj.weight", path), device);
+    let o_proj = safetensors.read_full_float::<B, 2>(&format!("{}.o_proj.weight", path), device);
 
-    let n_heads = config.n_heads;
-    let n_kv_heads = config.n_kv_heads;
+    let n_heads = config.num_attention_heads;
+    let n_kv_heads = config.num_key_value_heads;
     MultiHeadSelfAttention {
         n_heads,
         n_kv_heads,
@@ -159,8 +154,9 @@ where
     Data<B::FloatElem, 2>: From<Data<f32, 2>>,
     Data<B::FloatElem, 1>: From<Data<f32, 1>>,
 {
-    let mut blocks: Vec<ResidualDecoderAttentionBlock<B>> = Vec::with_capacity(config.n_layer);
-    for i in 0..config.n_layer {
+    let mut blocks: Vec<ResidualDecoderAttentionBlock<B>> =
+        Vec::with_capacity(config.num_hidden_layers);
+    for i in 0..config.num_hidden_layers {
         let transformer_block = load_transformer_block::<B>(
             safetensors,
             config,
@@ -170,26 +166,26 @@ where
         blocks.push(transformer_block);
     }
 
-    let embed_tokens =
-        safetensors.read_burn_tensor_bf16_as_f32::<B, 2>("model.embed_tokens.weight", device);
+    let embed_tokens = safetensors.read_full_float::<B, 2>("model.embed_tokens.weight", device);
 
     let [_n_vacab, n_state] = embed_tokens.dims();
-    let n_heads = config.n_heads;
-    let _n_kv_heads = config.n_kv_heads;
+    let n_heads = config.num_attention_heads;
+    let _n_kv_heads = config.num_key_value_heads;
     let head_dim = n_state / n_heads;
     let token_embedding = Embedding {
         weight: Param::from_tensor(embed_tokens),
     };
     let rotary_encoding =
-        RotaryEncodingConfig::new(config.max_seq_len, head_dim, config.rope_theta).init(device);
+        RotaryEncodingConfig::new(config.max_position_embeddings, head_dim, config.rope_theta)
+            .init(device);
     let norm = load_rmsnorm::<B>(safetensors, config, "model.norm", device);
     // sometimes lm_head is also called "output"
-    let lm_head = safetensors.read_burn_tensor_bf16_as_f32::<B, 2>("lm_head.weight", device);
+    let lm_head = safetensors.read_full_float::<B, 2>("lm_head.weight", device);
     let lm_head = nn::Linear {
         weight: Param::from_tensor(lm_head.transpose()),
         bias: None,
     };
-    let mask = attn_decoder_mask::<B>(config.max_seq_len, device);
+    let mask = attn_decoder_mask::<B>(config.max_position_embeddings, device);
     let _norm_eps = norm.eps;
 
     Llama {
@@ -199,28 +195,26 @@ where
         norm,
         lm_head,
         mask,
-        max_seq_len: config.max_seq_len,
+        max_seq_len: config.max_position_embeddings,
     }
 }
 
 fn main() {
-    let device = WgpuDevice::default();
+    let n_ctx = 512;
+    let config = Config::tiny_llama3();
+    let path = "models/tiny-llama3.safetensors";
+    let tokenizer =
+        Tokenizer::from_pretrained("HuggingFaceM4/tiny-random-Llama3ForCausalLM", None).unwrap();
 
-    let path = "model.safetensors";
+    let prompt = "Hello, ".to_string();
+
+    let device = WgpuDevice::default();
     let file = std::fs::File::open(path).unwrap();
     let bytes = file.bytes().collect::<Result<Vec<u8>, _>>().unwrap();
     let tensors = SafeTensors::deserialize(&bytes).unwrap();
 
-    tensors.tensors().iter().for_each(|(name, tensor)| {
-        println!("{}, {:?}, {:?}", name, tensor.dtype(), tensor.shape());
-    });
-
-    let config = Config::config_tiny();
-
     let llama = load_llama::<MyBackend>(&tensors, &config, &device);
 
-    let tokenizer = Tokenizer::from_pretrained("stas/tiny-random-llama-2", None).unwrap();
-    let prompt = "Hello, ".to_string();
     let tokens = tokenizer.encode(prompt.clone(), false).unwrap();
     let mut tokens = tokens
         .get_ids()
@@ -230,10 +224,13 @@ fn main() {
 
     let mut text = String::new();
 
+    let remaining = std::cmp::min(n_ctx, config.max_position_embeddings) - tokens.len();
+    println!("Remaining: {}", remaining);
+
     println!("\n\n\n");
     print!("{}", prompt);
 
-    for _i in 0..256 {
+    for _i in 0..remaining {
         let token_tensor = Tensor::from_ints(
             Data::from_usize(Data::new(
                 tokens.iter().map(|&t| t as usize).collect(),
@@ -252,7 +249,7 @@ fn main() {
         tokens.push(token_id);
 
         let token_text = tokenizer.decode(&[token_id as u32], true).unwrap();
-        print!("{token_text} ");
+        print!("{token_text}");
         std::io::stdout().flush().unwrap();
 
         text += &token_text;

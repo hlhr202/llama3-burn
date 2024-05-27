@@ -1,4 +1,4 @@
-use crate::operators::{OuterProduct, Rsqrt};
+use crate::operators::Rsqrt;
 use burn::{
     config::Config,
     module::{Module, Param},
@@ -6,7 +6,7 @@ use burn::{
     tensor::{
         activation::{silu, softmax},
         backend::Backend,
-        Int, Shape, Tensor,
+        Int, Tensor,
     },
 };
 use std::f32::NEG_INFINITY;
@@ -158,23 +158,6 @@ pub struct RotaryEncodingConfig {
 }
 
 impl RotaryEncodingConfig {
-    // not in use
-    pub fn _precompute_freq_cis<B: Backend>(
-        config: crate::Config,
-        device: &B::Device,
-    ) -> Tensor<B, 5> {
-        let seq_len = config.max_seq_len;
-        let n_elem = config.n_embd / config.n_heads;
-        let theta =
-            Tensor::<B, 1, _>::arange_step(0..(n_elem as i64), 2, device).float() / n_elem as f32;
-        let arange = Tensor::<B, 1, _>::arange(0..seq_len as i64, device).float();
-        let idx_theta = theta.outer(&arange);
-        let shape = Shape::new([1, 1, seq_len, n_elem / 2, 1]);
-        let idx_theta_cos = idx_theta.clone().cos().reshape(shape.clone());
-        let idx_theta_sin = idx_theta.sin().reshape(shape);
-        Tensor::<B, 5>::cat([idx_theta_cos, idx_theta_sin].to_vec(), 4)
-    }
-
     pub fn init<B: Backend>(&self, device: &B::Device) -> RotaryEncoding<B> {
         assert!(self.state_size % 2 == 0, "Head dims must be even.");
         assert!(self.theta > 0.0, "Theta must be positive.");

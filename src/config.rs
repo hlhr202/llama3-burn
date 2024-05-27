@@ -1,30 +1,36 @@
 pub struct Config {
-    pub block_size: usize,
-    pub vocab_size: usize,
-    pub n_layer: usize,
-    pub n_heads: usize,
-    pub n_kv_heads: usize,
-    pub hidden_size: usize,
-    pub n_embd: usize,
+    pub num_hidden_layers: usize,
+    pub num_attention_heads: usize,
+    pub num_key_value_heads: usize,
     pub rms_norm_eps: f64,
-    // n_ctx
-    pub max_seq_len: usize,
+    // n_ctx or max_seq_len or max_position_embeddings
+    // https://github.com/aju22/LLaMA2/blob/5716de40720123bf03013f3e08673a7e0feb53ba/model.py#L19
+    pub max_position_embeddings: usize,
     pub rope_theta: f64,
 }
 
+#[allow(dead_code)]
 impl Config {
-    pub fn config_tiny() -> Self {
+    // https://huggingface.co/stas/tiny-random-llama-2/blob/main/config.json
+    pub fn tiny_llama2() -> Self {
         Self {
-            block_size: 512,
-            vocab_size: 256,
-            n_layer: 2,
-            n_heads: 4,
-            n_kv_heads: 4,
-            hidden_size: 16,
-            n_embd: 256,
+            num_hidden_layers: 2,
+            num_attention_heads: 4,
+            num_key_value_heads: 4,
             rms_norm_eps: 1e-05,
-            // https://github.com/aju22/LLaMA2/blob/5716de40720123bf03013f3e08673a7e0feb53ba/model.py#L19
-            max_seq_len: 2048,
+            max_position_embeddings: 256,
+            rope_theta: 10000.0,
+        }
+    }
+
+    // https://huggingface.co/HuggingFaceM4/tiny-random-Llama3ForCausalLM/blob/main/config.json
+    pub fn tiny_llama3() -> Self {
+        Self {
+            num_hidden_layers: 2,
+            num_attention_heads: 4,
+            num_key_value_heads: 1,
+            rms_norm_eps: 1e-06,
+            max_position_embeddings: 2048,
             rope_theta: 10000.0,
         }
     }

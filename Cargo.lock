@@ -417,16 +417,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "burn-research"
-version = "0.1.0"
-dependencies = [
- "burn",
- "num-traits",
- "safetensors 0.4.3",
- "tokenizers",
-]
-
-[[package]]
 name = "burn-tch"
 version = "0.15.0"
 source = "git+https://github.com/tracel-ai/burn.git?branch=main#10737527d88c3059e98f91d9c9a27650e490bb0d"
@@ -1914,6 +1904,16 @@ name = "litrs"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ce301924b7887e9d637144fdade93f9dfff9b60981d4ac161db09720d39aa5"
+
+[[package]]
+name = "llama3-burn"
+version = "0.1.0"
+dependencies = [
+ "burn",
+ "num-traits",
+ "safetensors 0.4.3",
+ "tokenizers",
+]
 
 [[package]]
 name = "lock_api"

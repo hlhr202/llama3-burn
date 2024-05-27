@@ -1,5 +1,5 @@
 [package]
-name = "burn-research"
+name = "llama3-burn"
 version = "0.1.0"
 edition = "2021"
 
@@ -15,3 +15,10 @@ burn = { version = "0.15.0", git = "https://github.com/tracel-ai/burn.git", bran
 num-traits = "0.2.19"
 safetensors = "0.4.3"
 tokenizers = { version = "0.19.1", features = ["hf-hub", "http"] }
+
+[features]
+default = ["wgpu"]
+wgpu = ["burn/wgpu"]
+ndarray = ["burn/ndarray"]
+candle = ["burn/candle"]
+metal = ["burn/metal"]
