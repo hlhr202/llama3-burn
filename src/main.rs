@@ -208,7 +208,7 @@ fn main() {
 
     let prompt = "Hello, ".to_string();
 
-    let device = WgpuDevice::default();
+    let device = WgpuDevice::BestAvailable;
     let file = std::fs::File::open(path).unwrap();
     let bytes = file.bytes().collect::<Result<Vec<u8>, _>>().unwrap();
     let tensors = SafeTensors::deserialize(&bytes).unwrap();

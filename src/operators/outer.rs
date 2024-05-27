@@ -27,12 +27,12 @@ where
 
 #[test]
 fn test_outer() {
-    use burn::backend::ndarray::{NdArray, NdArrayDevice};
-    let device = NdArrayDevice::Cpu;
-    let v1 = Tensor::<NdArray, 1, _>::arange(1..5, &device).float();
-    let v2 = Tensor::<NdArray, 1, _>::arange(1..4, &device).float();
+    use burn::backend::wgpu::{Wgpu, WgpuDevice};
+    let device = WgpuDevice::BestAvailable;
+    let v1 = Tensor::<Wgpu, 1, _>::arange(1..5, &device).float();
+    let v2 = Tensor::<Wgpu, 1, _>::arange(1..4, &device).float();
     let result = v1.outer(&v2);
-    let expected = Tensor::<NdArray, 2, _>::from_floats(
+    let expected = Tensor::<Wgpu, 2, _>::from_floats(
         [
             [1.0, 2.0, 3.0],
             [2.0, 4.0, 6.0],
